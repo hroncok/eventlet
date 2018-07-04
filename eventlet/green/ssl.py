@@ -24,6 +24,7 @@ __patched__ = [
     'create_default_context', '_create_default_https_context']
 
 _original_sslsocket = __ssl.SSLSocket
+_original_wrap_socket = __ssl.wrap_socket
 
 
 class GreenSSLSocket(_original_sslsocket):
@@ -43,12 +44,25 @@ class GreenSSLSocket(_original_sslsocket):
     # we are inheriting from SSLSocket because its constructor calls
     # do_handshake whose behavior we wish to override
 
-    def __init__(self, sock, keyfile=None, certfile=None,
-                 server_side=False, cert_reqs=CERT_NONE,
-                 ssl_version=PROTOCOL_SSLv23, ca_certs=None,
-                 do_handshake_on_connect=True, *args, **kw):
+    @classmethod
+    def _create(cls, sock, keyfile=None, certfile=None,
+                server_side=False, cert_reqs=CERT_NONE,
+                ssl_version=PROTOCOL_SSLv23, ca_certs=None,
+                do_handshake_on_connect=True, *args, **kw):
         if not isinstance(sock, GreenSocket):
             sock = GreenSocket(sock)
+
+        self = _original_wrap_socket(
+            sock=sock.fd,
+            keyfile=keyfile,
+            certfile=certfile,
+            server_side=server_side,
+            cert_reqs=cert_reqs,
+            ssl_version=ssl_version,
+            ca_certs=ca_certs,
+            do_handshake_on_connect=do_handshake_on_connect and six.PY2,
+            *args, **kw
+        )
 
         self.act_non_blocking = sock.act_non_blocking
 
@@ -59,9 +73,6 @@ class GreenSSLSocket(_original_sslsocket):
 
         # nonblocking socket handshaking on connect got disabled so let's pretend it's disabled
         # even when it's on
-        super(GreenSSLSocket, self).__init__(
-            sock.fd, keyfile, certfile, server_side, cert_reqs, ssl_version,
-            ca_certs, do_handshake_on_connect and six.PY2, *args, **kw)
 
         # the superclass initializer trashes the methods so we remove
         # the local-object versions of them and let the actual class
@@ -366,7 +377,7 @@ SSLSocket = GreenSSLSocket
 
 
 def wrap_socket(sock, *a, **kw):
-    return GreenSSLSocket.wrap_socket(sock, *a, **kw)
+    return GreenSSLContext.wrap_socket(sock, *a, **kw)
 
 
 if hasattr(__ssl, 'sslwrap_simple'):
@@ -388,8 +399,9 @@ if hasattr(__ssl, 'SSLContext'):
     class GreenSSLContext(_original_sslcontext):
         __slots__ = ()
 
-        def wrap_socket(self, sock, *a, **kw):
-            return GreenSSLSocket(sock, *a, _context=self, **kw)
+        @staticmethod
+        def wrap_socket(sock, *a, **kw):
+            return GreenSSLSocket._create(sock, *a, **kw)
 
         # https://github.com/eventlet/eventlet/issues/371
         # Thanks to Gevent developers for sharing patch to this problem.
