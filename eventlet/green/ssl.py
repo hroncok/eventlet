@@ -97,6 +97,8 @@ class GreenSSLSocket(_original_sslsocket):
             if do_handshake_on_connect and self._connected:
                 self.do_handshake()
 
+        return self
+
     def settimeout(self, timeout):
         self._timeout = timeout
 
